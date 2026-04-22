@@ -1,0 +1,80 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Verificar que el código está bien formateado
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar shellcheck (para scripts bash)
+        run: sudo apt-get install -y shellcheck
+
+      - name: Revisar scripts bash
+        run: |
+          find scripts/ -name "*.sh" -exec shellcheck {} \;
+
+      - name: Instalar TFLint (para Terraform)
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: Revisar código Terraform
+        run: |
+          cd terraform/aws/vpc
+          tflint --init
+          tflint
+
+  # Validar Terraform
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: |
+          cd terraform/aws/vpc
+          terraform init -backend=false
+          terraform validate
+
+  # Escanear seguridad en Terraform
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Escanear con Trivy (busca vulnerabilidades)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+  # Solo notifica si algo falla
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [lint, terraform-validate, security-scan]
+    if: failure()
+    steps:
+      - name: Notificar fallo
+        run: |
+          echo "Pipeline falló. Revisar logs."
